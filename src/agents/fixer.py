@@ -16,12 +16,12 @@ class FixerAgent:
         self.model_name = model_name
         self.name = "Fixer"
 
-    def apply_fixes(self, file_path: str, audit_results: Dict) -> bool:
+    def apply_fixes(self, file_path: str, audit_results: Dict) -> Dict:
         """Reads a file and applies the suggested fixes using the LLM"""
         
         if not audit_results.get("issues"):
             print(f"Aucun problème à corriger pour {file_path}")
-            return True
+            return "1"
 
         original_content = FileOperations.read_file(file_path)
         
@@ -38,7 +38,11 @@ class FixerAgent:
             raw_response = response.choices[0].message.content
             fixed_code = self._extract_code(response.choices[0].message.content)
             
-            # Save the new version
+
+            if not fixed_code.strip():
+                raise ValueError("Le LLM a généré un code vide")
+            
+           
             FileOperations.write_file(file_path, fixed_code)
             
             log_experiment(
@@ -53,7 +57,7 @@ class FixerAgent:
                 },
                 status="SUCCESS"
             )
-            return True
+            return fixed_code
             
         except Exception as e:
             print(f"Échec de la réparation: {e}")
@@ -69,7 +73,7 @@ class FixerAgent:
                     },
                     status="FAILURE"
                 )
-            return False
+            return "0"
 
     def _build_fixer_prompt(self, file_path: str, content: str, audit: Dict) -> str:
         issues_str = "\n".join([f"- L{i.get('line')}: {i.get('description')} (Suggestion: {i.get('suggestion')})" 
@@ -91,3 +95,4 @@ class FixerAgent:
         elif "```" in response:
             return response.split("```")[1].split("```")[0].strip()
         return response.strip()
+    
