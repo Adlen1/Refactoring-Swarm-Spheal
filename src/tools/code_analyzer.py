@@ -25,8 +25,20 @@ class CodeAnalyzer:
             }
         """
         try:
-            # Exécution pylint avec format JSON
+            # Exécution pylint avec format texte pour obtenir le score
             result = subprocess.run(
+                ['pylint', file_path, '--output-format=text'],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            # Extraire le score de stdout (format texte)
+            combined_output = result.stdout + result.stderr
+            score = CodeAnalyzer._extract_pylint_score(combined_output)
+            
+            # Exécution séparée pour les messages JSON
+            json_result = subprocess.run(
                 ['pylint', file_path, '--output-format=json'],
                 capture_output=True,
                 text=True,
@@ -35,18 +47,15 @@ class CodeAnalyzer:
             
             # Parser les messages JSON
             pylint_messages = []
-            if result.stdout:
+            if json_result.stdout:
                 try:
-                    pylint_messages = json.loads(result.stdout)
+                    pylint_messages = json.loads(json_result.stdout)
                 except json.JSONDecodeError:
                     pass
             
-            # Extraire le score de stderr
-            score = CodeAnalyzer._extract_pylint_score(result.stderr)
-            
             return {
                 'score': score,
-                'raw_output': result.stderr,
+                'raw_output': combined_output,
                 'messages': pylint_messages,
                 'success': True
             }
