@@ -16,6 +16,8 @@ class FixerAgent:
         self.client = Mistral(api_key=api_key)
         self.model_name = model_name
         self.name = "Fixer"
+        # *** MODIFIED: added initialization print, consistent with Auditor and Judge ***
+        print(f"✅ {self.name} initialisé avec modèle: {self.model_name}")
 
     def apply_fixes(self, file_path: str, audit_results: Dict) -> Dict:
         """Reads a file and applies the suggested fixes using the LLM"""
@@ -43,7 +45,6 @@ class FixerAgent:
 
             raw_response = response.choices[0].message.content
             fixed_code = self._extract_code(response.choices[0].message.content)
-            
 
             if not fixed_code.strip():
                 raise ValueError("Le LLM a généré un code vide")
@@ -69,7 +70,7 @@ class FixerAgent:
             log_experiment(
                agent_name=self.name,
                 model_used=self.model_name,
-                action=ActionType.FIX,  # This action requires strict logging
+                action=ActionType.FIX,
                 details={
                     "input_prompt": prompt,          
                     "output_response": raw_response, 
@@ -90,7 +91,7 @@ class FixerAgent:
                     action=ActionType.FIX,
                     details={
                         "input_prompt": prompt,
-                        "output_response": str(e), # Log the error as the response
+                        "output_response": str(e),
                         "file": file_path,
                         "error": str(e)
                     },
@@ -102,7 +103,6 @@ class FixerAgent:
         issues_str = "\n".join([f"- L{i.get('line', 0)}: {i.get('description', 'N/A')} (Suggestion: {i.get('suggestion', 'N/A')})" 
                                for i in audit.get("issues", [])])
         
-        # Count original elements
         function_count = len(re.findall(r'^def\s+\w+\s*\(', content, re.MULTILINE))
         class_count = len(re.findall(r'^class\s+\w+\s*[:\(]', content, re.MULTILINE))
         
@@ -132,6 +132,7 @@ RÈGLES CRITIQUES - À RESPECTER ABSOLUMENT:
 3. **GARDER LA STRUCTURE** - Le code corrigé doit avoir toutes les {function_count} fonctions et {class_count} classes
 4. **AJOUTER DES DOCSTRINGS** si demandé, mais GARDER le code fonctionnel
 5. **NE PAS SIMPLIFIER** en supprimant du code - corriger les bugs sans supprimer de fonctionnalités
+6. **CORRIGER LA LOGIQUE MÉTIER** - Si une fonction calcule quelque chose d'incorrect (ex: somme au lieu de moyenne), corriger la logique selon le nom et l'intention de la fonction
 
 IMPORTANT: Retourne le fichier Python COMPLET avec TOUTES les fonctions et classes corrigées.
 Le code doit être dans un bloc ```python ... ```
@@ -143,4 +144,3 @@ Le code doit être dans un bloc ```python ... ```
         elif "```" in response:
             return response.split("```")[1].split("```")[0].strip()
         return response.strip()
-    
