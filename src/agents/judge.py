@@ -319,7 +319,7 @@ Exception rencontrée: {error_msg}"""
         }
     
     def _build_test_prompt(self, file_path: str, source_code: str) -> str:
-        """Build the prompt for test generation - fully dynamic based on file path"""
+        """Build the prompt for test generation - semantic intent, not current behavior"""
         
         # Extract module name from file path for imports
         base_name = os.path.basename(file_path).replace('.py', '')
@@ -338,7 +338,11 @@ Exception rencontrée: {error_msg}"""
         else:
             import_statement = f"from {dir_name}.{base_name} import *"
         
-        return f"""Tu es un ingénieur QA senior spécialisé dans les tests unitaires Python. Ta mission est de générer une suite de tests pytest exhaustive et professionnelle pour valider le code source fourni.
+        # *** MODIFIED: completely rewrote the prompt to test INTENDED behavior,
+        # not current (potentially buggy) behavior. This is the fix for the
+        # infinite self-healing loop where tests validated bugs instead of
+        # catching them. ***
+        return f"""Tu es un ingénieur QA senior. Ta mission est de générer des tests pytest qui vérifient le COMPORTEMENT ATTENDU et CORRECT du code, pas son comportement actuel (qui peut être buggé).
 
 ================================================================================
 INFORMATIONS DU MODULE
@@ -346,84 +350,104 @@ INFORMATIONS DU MODULE
 FICHIER: {file_path}
 MODULE: {base_name}
 DOSSIER: {dir_name}
-IMPORT: {import_statement}
 
 ÉLÉMENTS DÉTECTÉS:
 - Fonctions: {', '.join(function_names) if function_names else 'Aucune'}
 - Classes: {', '.join(class_names) if class_names else 'Aucune'}
 
 ================================================================================
-CODE SOURCE
+CODE SOURCE (POTENTIELLEMENT BUGGÉ)
 ================================================================================
 ```python
 {source_code}
 ```
 
 ================================================================================
-DIRECTIVES DE GÉNÉRATION
+RÈGLE FONDAMENTALE - LIRE ATTENTIVEMENT
 ================================================================================
 
-1. **STRUCTURE OBLIGATOIRE**:
-   - Fichier autonome exécutable avec pytest
-   - Configuration PYTHONPATH pour les imports
-   - Convention de nommage: test_<fonction>_<scenario>
-   - Docstring pour chaque test
+Tu dois déduire l'INTENTION SÉMANTIQUE du code à partir des noms de fonctions,
+paramètres et structure, puis tester cette intention — même si le code actuel
+ne la respecte pas encore.
 
-2. **COUVERTURE DE TESTS** (pour chaque fonction/méthode):
-   - Cas nominaux: valeurs typiques, comportement normal
-   - Cas limites: zéro, négatifs, listes vides, None, grandes valeurs
-   - Cas d'erreurs: exceptions attendues avec pytest.raises()
+PRINCIPE: Le code est BUGGÉ. Ton rôle est de détecter ces bugs via des tests
+qui définissent le comportement CORRECT.
 
-3. **RÈGLES DE QUALITÉ**:
-   - Tests indépendants sans état partagé
-   - Une assertion logique par test
-   - pytest.approx() pour les comparaisons flottantes
-   - Noms descriptifs en anglais
+EXEMPLES:
 
-4. **TEMPLATE D'IMPORT**:
+❌ MAUVAIS (valide le bug):
+```python
+# Code buggé: def calculate_average(numbers): return sum(numbers)
+def test_average():
+    assert calculate_average([10, 20]) == 30  # valide le bug !
+```
+
+✅ BON (détecte le bug):
+```python
+# La fonction s'appelle "average" → elle DOIT retourner la moyenne
+def test_average():
+    assert calculate_average([10, 20]) == 15  # moyenne correcte
+```
+
+❌ MAUVAIS (valide le bug):
+```python
+# Code buggé: def calculate_discount(price, pct): return price + price*pct/100
+def test_discount():
+    assert calculate_discount(100, 10) == 110  # valide l'addition erronée
+```
+
+✅ BON (détecte le bug):
+```python
+# "discount" = réduction → le prix DOIT diminuer
+def test_discount():
+    assert calculate_discount(100, 10) == 90  # 10% de réduction
+```
+
+================================================================================
+MÉTHODOLOGIE
+================================================================================
+
+Pour chaque fonction, tu dois:
+
+1. **Analyser le NOM** de la fonction pour déduire son intention
+   - "calculate_average" → retourner la moyenne arithmétique
+   - "calculate_discount" → retourner un prix RÉDUIT
+   - "divide" → effectuer une division (gérer division par zéro)
+   - "subtract" → soustraire (retourner a - b, pas a + b)
+
+2. **Ignorer le comportement actuel** si il contredit l'intention sémantique
+
+3. **Générer des tests qui ÉCHOUERONT** sur le code buggé et PASSERONT
+   sur le code correct
+
+4. **Couvrir les cas critiques**:
+   - Valeurs normales: résultat attendu selon la logique métier
+   - Cas limites: zéro, négatifs, listes vides, None
+   - Cas d'erreur: exceptions attendues (ex: divide by zero → ValueError)
+
+================================================================================
+STRUCTURE OBLIGATOIRE
+================================================================================
+
 ```python
 import pytest
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 {import_statement}
-```
 
-================================================================================
-RÈGLES CRITIQUES - LIRE ATTENTIVEMENT
-================================================================================
-
-**IMPORTANT**: Les tests doivent correspondre au COMPORTEMENT RÉEL du code fourni:
-
-1. **Lire attentivement le code source** avant de générer les tests
-2. **Ne pas inventer de comportements** - tester uniquement ce que le code fait réellement
-3. **Si une fonction retourne None pour cas d'erreur**, ne pas tester qu'elle lève une exception
-4. **Si une fonction crée automatiquement des clés manquantes**, ne pas tester KeyError
-5. **Si une fonction retourne une liste vide pour entrée vide**, tester ce comportement exact
-6. **Vérifier les docstrings et annotations** pour comprendre le comportement attendu
-
-EXEMPLE DE MAUVAIS TEST (à éviter):
-```python
-# Si le code fait: return data.get(key, None)
-def test_missing_key():
-    with pytest.raises(KeyError):  # FAUX - le code retourne None, pas KeyError
-        get_value(data, "missing")
-```
-
-EXEMPLE DE BON TEST:
-```python
-# Si le code fait: return data.get(key, None)
-def test_missing_key():
-    result = get_value(data, "missing")
-    assert result is None  # CORRECT - correspond au comportement réel
+# Tests organisés par fonction, minimum 3 tests par fonction
 ```
 
 ================================================================================
 FORMAT DE SORTIE
 ================================================================================
-- Code Python uniquement, pas de markdown, pas d'explications
+- Code Python UNIQUEMENT, pas de markdown, pas d'explications
 - Exécutable directement avec: pytest fichier.py -v
 - Minimum 3 tests par fonction détectée
+- Une assertion logique principale par test
+- pytest.approx() pour les comparaisons flottantes
+- Docstrings courtes pour chaque test expliquant l'intention
 
 Le code doit commencer directement par les imports.
 """
@@ -446,7 +470,6 @@ Le code doit commencer directement par les imports.
         
         # Check for collection errors (import failures, syntax errors)
         if 'ERROR' in output and 'collecting' in output.lower():
-            # Collection failed - treat as error
             return {
                 'passed': 0,
                 'failed': 0,
@@ -463,37 +486,27 @@ Le code doit commencer directement par les imports.
                 'collection_error': True
             }
         
-        # Look for summary line like "5 failed, 9 passed" or "9 passed, 5 failed"
-        # Match patterns: "X passed", "X failed", "X error"
         for line in output.split('\n'):
-            # Look for the final summary line (contains "passed" or "failed" with numbers)
             if '=====' in line and ('passed' in line or 'failed' in line):
-                # Extract "N passed"
                 passed_match = re.search(r'(\d+)\s+passed', line)
                 if passed_match:
                     passed = int(passed_match.group(1))
                 
-                # Extract "N failed"
                 failed_match = re.search(r'(\d+)\s+failed', line)
                 if failed_match:
                     failed = int(failed_match.group(1))
                 
-                # Extract "N error"
                 error_match = re.search(r'(\d+)\s+error', line)
                 if error_match:
                     errors = int(error_match.group(1))
         
-        # If we found nothing (0 passed, 0 failed, 0 errors), something went wrong
         if passed == 0 and failed == 0 and errors == 0:
-            # Check if there were any test functions actually collected
             collected_match = re.search(r'collected\s+(\d+)\s+item', output)
             if collected_match:
                 collected = int(collected_match.group(1))
                 if collected > 0:
-                    # Tests were collected but we couldn't parse results - assume error
                     errors = 1
             else:
-                # No collection info found - treat as error
                 errors = 1
         
         return {
@@ -508,25 +521,22 @@ Le code doit commencer directement par les imports.
         capture = False
         
         for line in output.split('\n'):
-            # Start capturing at FAILURES or ERRORS section
             if 'FAILURES' in line or 'ERRORS' in line or 'ERROR' in line:
                 capture = True
             
-            # Stop at short test summary
             if 'short test summary' in line.lower():
                 capture = False
             
             if capture:
                 error_lines.append(line)
         
-        # If no specific failures found, return last 30 lines
         if not error_lines:
             return '\n'.join(output.split('\n')[-30:])
         
         return '\n'.join(error_lines)
     
     def _build_test_analysis_prompt(self, test_file: str, output: str, source_file: str = None) -> str:
-        """Build a proper prompt for logging test analysis (consistent with Auditor/Fixer format)"""
+        """Build a proper prompt for logging test analysis"""
         
         return f"""ANALYSE D'EXÉCUTION DE TESTS PYTEST
 ================================================================================
@@ -550,39 +560,25 @@ SORTIE PYTEST (TRONQUÉE)
 """
     
     def _analyze_failures_for_fixer(self, output: str, source_file: str = None) -> list:
-        """Analyze test failures and create detailed fix instructions for Fixer agent
-        
-        Args:
-            output: Raw pytest output
-            source_file: Path to the source file being tested
-            
-        Returns:
-            list: List of structured fix instructions with detailed error info
-        """
+        """Analyze test failures and create detailed fix instructions for Fixer agent"""
         import re
         
         fix_instructions = []
         
-        # Split output into individual test failure sections
-        # Each failure starts with "_____ test_name _____" and contains the full traceback
         failure_sections = re.split(r'_{3,}\s*(test_\w+)\s*_{3,}', output)
         
-        # Process pairs of (test_name, failure_content)
         for i in range(1, len(failure_sections), 2):
             if i + 1 < len(failure_sections):
                 test_name = failure_sections[i]
                 failure_content = failure_sections[i + 1]
                 
-                # Extract the assertion or error details
                 error_info = self._parse_failure_details(test_name, failure_content)
                 if error_info:
                     fix_instructions.append(error_info)
         
-        # Also check short test summary for any missed failures
         summary_pattern = r'FAILED\s+[\w./]+::(test_\w+)\s*[-–]\s*(\w+(?:Error|Exception)?):?\s*(.*)'
         summary_failures = re.findall(summary_pattern, output)
         
-        # Add any failures from summary that we didn't already capture
         existing_tests = {f.get('test_name') for f in fix_instructions}
         for test_name, error_type, error_msg in summary_failures:
             if test_name not in existing_tests:
@@ -596,7 +592,6 @@ SORTIE PYTEST (TRONQUÉE)
                     'error_details': error_msg.strip()[:500]
                 })
         
-        # If still no structured failures found, use raw error logs
         if not fix_instructions and ('FAILED' in output or 'ERROR' in output):
             error_section = self._extract_error_logs(output)
             fix_instructions.append({
@@ -627,25 +622,19 @@ SORTIE PYTEST (TRONQUÉE)
             'error_details': ''
         }
         
-        # Extract the test code (lines starting with > )
         test_code_lines = re.findall(r'>\s+(.+)', failure_content)
         if test_code_lines:
             result['test_code'] = '\n'.join(test_code_lines)
         
-        # Extract assertion error details
-        # Pattern: "AssertionError: assert X == Y" or "E       assert X == Y"
         assertion_match = re.search(r'(?:AssertionError:|E\s+assert)\s*(.+)', failure_content)
         if assertion_match:
             result['error_details'] = assertion_match.group(1).strip()[:500]
         
-        # Extract expected vs actual from pytest output
-        # Pattern: "E       assert 'actual' == 'expected'"
         comparison_match = re.search(r"assert\s+(.+?)\s*==\s*(.+?)(?:\n|$)", failure_content)
         if comparison_match:
             result['actual'] = comparison_match.group(1).strip()[:200]
             result['expected'] = comparison_match.group(2).strip()[:200]
         
-        # Also look for "where X = function(...)" to understand what was called
         where_match = re.search(r'where\s+.+?=\s*(\w+)\(([^)]*)\)', failure_content)
         function_called = None
         if where_match:
@@ -654,7 +643,6 @@ SORTIE PYTEST (TRONQUÉE)
             result['function_called'] = function_called
             result['function_args'] = args
         
-        # Detect error type from content
         if 'KeyError' in failure_content:
             result['error_type'] = 'KeyError'
         elif 'TypeError' in failure_content:
@@ -666,7 +654,6 @@ SORTIE PYTEST (TRONQUÉE)
         elif 'IndexError' in failure_content:
             result['error_type'] = 'IndexError'
         
-        # Build detailed description
         desc_parts = [f"Test '{test_name}' a échoué"]
         if result['test_code']:
             desc_parts.append(f"Code du test: {result['test_code'][:200]}")
@@ -678,7 +665,6 @@ SORTIE PYTEST (TRONQUÉE)
         
         result['description'] = '\n'.join(desc_parts)
         
-        # Build specific suggestion
         suggestion_parts = []
         if function_called:
             suggestion_parts.append(f"Vérifier la fonction '{function_called}'")
@@ -691,11 +677,7 @@ SORTIE PYTEST (TRONQUÉE)
         return result
     
     def evaluate_with_tolerance(self, test_results: Dict) -> Dict:
-        """Evaluate test results with tolerance - used for final verdict after max iterations
-        
-        This method applies a tolerance threshold: if the pass rate is high enough
-        (e.g., 90%+ with at least 10 tests), we consider it acceptable even with
-        some failing tests.
+        """Evaluate test results with tolerance - used only for logging, not final verdict
         
         Args:
             test_results: Dict with 'passed', 'failed', 'errors' counts
@@ -735,7 +717,6 @@ SORTIE PYTEST (TRONQUÉE)
         
         pass_rate = passed / total
         
-        # Check if we have enough tests and high enough pass rate
         if total >= self.MIN_TESTS_FOR_TOLERANCE and pass_rate >= self.PASS_RATE_THRESHOLD:
             return {
                 'acceptable': True,
@@ -778,7 +759,6 @@ SORTIE PYTEST (TRONQUÉE)
         
         base_suggestion = suggestions.get(error_type, f"Corriger l'erreur {error_type} dans la fonction testée.")
         
-        # Add context from error message if available
         if error_msg:
             base_suggestion += f"\nDétail: {error_msg[:300]}"
         
